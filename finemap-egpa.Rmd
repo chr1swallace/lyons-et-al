@@ -1,0 +1,95 @@
+# Script for fine mapping from univariate GWAS summary stats
+
+## input
+
+*data* is a data.frame with columns
+chromosome
+rsid
+position
+cases_total
+controls_total
+all_maf
+all_OR
+frequentist_add_pvalue
+frequentist_add_se_1
+
+
+## Calculate Approximate Bayes Factors using abf function
+
+
+Quoting from Wakefield's paper, http://faculty.washington.edu/jonno/papers/GE08.pdf:
+
+First, we need a prior estimate for how big the OR is likely to be.  For a rare disease, OR =~ relative risk.  Effect-MAF independence: The simplest choice is to take the
+variance, W, as independent of the MAF. The prior distribution of the
+relative risk, expðyÞ, is lognormal and we may specify an upper value
+RRu, above which we believe that relative risks will occur with low
+probability. If the prior probability of a relative risk above RRu is
+q we obtain W=[expression]. 
+
+```{r}
+fW <- function(RRu,q) {
+    (log(RRu)/qnorm(q,lower.tail=FALSE))^2
+}
+```
+For example, for a
+5% chance that relative risks are above 2, RR=2; q=0.05,
+and W=0.42**2=0.178.
+
+```{r}
+fW(2,0.05)
+```
+
+I think OR in GWAS are smaller than this, and set W=0.09 below, but you may have a different prior.
+
+```{r}
+fW(2,0.01)
+fW(1.6,0.01)
+```
+
+```{r}
+##'Calculate approximate Bayes factors from p values and MAF
+##'
+##' this is a function to calculate approximate Bayes factors from p
+##' values and MAF - for reference see Wakefield, J (2009) Bayes
+##' factors for genome-wide association studies: comparison with
+##' p-values. Genetic Epidemiology 33: 79–86.
+##'
+##' W is selected as describe in the following quote
+##'
+##' 
+
+##' @title abf
+##' @param maf minor allele frequency
+##' @param n0 number of controls
+##' @param n1 number of cases
+##' @param scale0 by default, =n0
+##' @param scale1 by default, =n1
+##' @return ABF
+##' @export
+##' @author Chris Wallace
+abf <- function (beta, se.beta)  { # evidence for alt - ie high ABF => support for alternative
+    W <- 0.09 # suitable for disease GWAS
+    z <- beta/se.beta
+    V <- se.beta^2
+    K <- W/V
+    lABF <- log(sqrt(1+K)) - z^2*K/(2*(1+K))
+    return(-lABF)
+}
+
+library(coloc) # logsum function, get library from CRAN
+lbf2pp <- function(lBF) {
+    pp <- exp(lBF - coloc:::logsum(lBF))
+}
+
+data$lBF <- abf(beta=log(data$all_OR), se.beta=data$frequentist_add_se_1)
+data$pp <- lbf2pp(data$lBF)
+
+
+## sanity check
+library(ggplot2)
+library(cowplot)
+p1 <- ggplot(data,aes(x=position,y=-log10(frequentist_add_pvalue))) + geom_point()
+p2 <- ggplot(data,aes(x=position,y=lBF)) + geom_point()
+p3 <- ggplot(data,aes(x=position,y=pp)) + geom_point()
+plot_grid(p1,p2,p3,nrow=3)
+```
